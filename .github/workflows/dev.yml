@@ -1,0 +1,55 @@
+name: Deploy to Staging
+on:
+  push:
+    branches: [ develop ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      - name: Build Docker image
+        run: |
+          echo "Building image..."
+          docker build -t ${{ secrets.REGISTRY_URL }}/licitaciones-ia:dev-latest .
+
+      - name: Login to registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.REGISTRY_URL }}
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ secrets.REGISTRY_URL }}/licitaciones-ia:dev-latest
+
+      - name: SSH deploy to STG
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.STG_HOST }}
+          username: ${{ secrets.STG_USER }}
+          key: ${{ secrets.STG_SSH_KEY }}
+          script: |
+            docker pull ${{ secrets.REGISTRY_URL }}/licitaciones-ia:dev-latest
+            docker stop licitaciones-stg || true
+            docker rm licitaciones-stg || true
+            docker run -d --name licitaciones-stg \
+              -p 8501:8501 --restart always \
+              -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+              -e DB_USER="$DB_USER" \
+              -e DB_PASS="$DB_PASS" \
+              -e DB_HOST="$DB_HOST" \
+              -e DB_PORT="$DB_PORT" \
+              -e DB_NAME="$DB_NAME" \
+              ${{ secrets.REGISTRY_URL }}/licitaciones-ia:dev-latest
